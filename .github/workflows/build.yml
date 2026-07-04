@@ -1,0 +1,101 @@
+﻿name: Construire les exécutables
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact: FencingVideosDownloader-Windows
+          - os: macos-latest
+            name: macOS
+            artifact: FencingVideosDownloader-macOS
+          - os: ubuntu-22.04
+            name: Linux
+            artifact: FencingVideosDownloader-Linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+
+      - name: Lancer les tests
+        run: python -m unittest discover -s tests
+
+      - name: Construire (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name FencingVideosDownloader
+          --icon assets/icon.ico
+          --collect-all customtkinter --collect-all imageio_ffmpeg
+          --collect-submodules yt_dlp --add-data "assets;assets" launcher.py
+
+      - name: Construire (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller --noconfirm --windowed --name FencingVideosDownloader \
+            --icon assets/icon.icns \
+            --collect-all customtkinter --collect-all imageio_ffmpeg \
+            --collect-submodules yt_dlp --add-data "assets:assets" launcher.py
+          ditto -c -k --keepParent "dist/FencingVideosDownloader.app" "dist/${{ matrix.artifact }}.zip"
+
+      - name: Construire (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name FencingVideosDownloader \
+            --icon assets/icon.png \
+            --collect-all customtkinter --collect-all imageio_ffmpeg \
+            --collect-submodules yt_dlp --add-data "assets:assets" launcher.py
+
+      - name: Préparer l'artefact (Windows)
+        if: runner.os == 'Windows'
+        run: Copy-Item dist/FencingVideosDownloader.exe "dist/${{ matrix.artifact }}.exe"
+
+      - name: Préparer l'artefact (Linux)
+        if: runner.os == 'Linux'
+        run: cp dist/FencingVideosDownloader "dist/${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}.exe
+            dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publier la release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artefacts/*
+          generate_release_notes: true

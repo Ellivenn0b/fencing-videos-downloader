@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fencing-videos-downloader"
+version = "1.0.0"
+description = "Découpez des extraits vidéo depuis YouTube ou un flux m3u8, en quelques clics."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "customtkinter>=5.2.2",
+    "yt-dlp>=2026.6.9",
+    "imageio-ffmpeg>=0.5.1",
+    "pillow>=10.0",
+]
+
+[project.gui-scripts]
+fencing-videos-downloader = "fencing_videos_downloader.app:main"
+
+[tool.setuptools]
+packages = ["fencing_videos_downloader"]
