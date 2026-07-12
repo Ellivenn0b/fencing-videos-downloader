@@ -67,11 +67,31 @@ class ClipForm(ctk.CTkFrame):
             5, 0, "Nom du clip (facultatif)", "généré automatiquement si vide", columnspan=2
         )
 
+        self._slowmo_var = ctk.BooleanVar(value=False)
+        self._slowmo_check = ctk.CTkCheckBox(
+            self,
+            text="Ajouter un ralenti à la fin de l'extrait",
+            variable=self._slowmo_var,
+            command=self._toggle_slowmo,
+        )
+        self._slowmo_check.grid(
+            row=7, column=0, columnspan=2, sticky="w", padx=PAD, pady=(14, 2)
+        )
+        self._slowmo_row = ctk.CTkFrame(self, fg_color="transparent")
+        self._slowmo_row.grid(row=8, column=0, columnspan=2, sticky="w", padx=PAD)
+        ctk.CTkLabel(self._slowmo_row, text="Réduction de vitesse (%)").pack(
+            side="left", padx=(24, 8)
+        )
+        self._slowmo_entry = ctk.CTkEntry(self._slowmo_row, width=70, placeholder_text="50")
+        self._slowmo_entry.insert(0, "50")
+        self._slowmo_entry.pack(side="left")
+        self._slowmo_row.grid_remove()
+
         ctk.CTkLabel(self, text="Dossier de destination", anchor="w").grid(
-            row=7, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(14, 2)
+            row=9, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(14, 2)
         )
         folder_row = ctk.CTkFrame(self, fg_color="transparent")
-        folder_row.grid(row=8, column=0, columnspan=2, sticky="ew", padx=PAD)
+        folder_row.grid(row=10, column=0, columnspan=2, sticky="ew", padx=PAD)
         folder_row.grid_columnconfigure(0, weight=1)
         self._folder_entry = ctk.CTkEntry(folder_row)
         self._folder_entry.insert(0, str(desktop_dir()))
@@ -88,21 +108,21 @@ class ClipForm(ctk.CTkFrame):
             command=self._submit,
         )
         self._download_button.grid(
-            row=9, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(22, 10)
+            row=11, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(22, 10)
         )
 
         self._progress = ctk.CTkProgressBar(self)
         self._progress.set(0)
-        self._progress.grid(row=10, column=0, columnspan=2, sticky="ew", padx=PAD)
+        self._progress.grid(row=12, column=0, columnspan=2, sticky="ew", padx=PAD)
 
         self._status = ctk.CTkLabel(self, text="Prêt.", anchor="w", wraplength=520, justify="left")
         self._default_text_color = self._status.cget("text_color")
-        self._status.grid(row=11, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(8, 0))
+        self._status.grid(row=13, column=0, columnspan=2, sticky="ew", padx=PAD, pady=(8, 0))
 
         self._open_button = ctk.CTkButton(
             self, text="Ouvrir le dossier", width=140, command=self._open_folder
         )
-        self._open_button.grid(row=12, column=0, columnspan=2, padx=PAD, pady=(10, 0))
+        self._open_button.grid(row=14, column=0, columnspan=2, padx=PAD, pady=(10, 0))
         self._open_button.grid_remove()
 
     # ------------------------------------------------------------------ UI
@@ -125,6 +145,12 @@ class ClipForm(ctk.CTkFrame):
             self._detection.configure(text="Source détectée : flux FencingTV (m3u8)")
         else:
             self._detection.configure(text="Source détectée : YouTube")
+
+    def _toggle_slowmo(self) -> None:
+        if self._slowmo_var.get():
+            self._slowmo_row.grid()
+        else:
+            self._slowmo_row.grid_remove()
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(initialdir=self._folder_entry.get() or str(desktop_dir()))
@@ -173,8 +199,26 @@ class ClipForm(ctk.CTkFrame):
         except OSError:
             return self._fail("Impossible d'utiliser ce dossier de destination.")
 
+        add_slowmo = bool(self._slowmo_var.get())
+        slowmo_percent = 50
+        if add_slowmo:
+            slowmo_text = self._slowmo_entry.get().strip() or "50"
+            if not slowmo_text.isdigit():
+                return self._fail("La réduction de vitesse du ralenti doit être un nombre entier.")
+            slowmo_percent = int(slowmo_text)
+            if not (1 <= slowmo_percent <= 95):
+                return self._fail("La réduction de vitesse du ralenti doit être comprise entre 1 et 95 %.")
+
         name = sanitize_filename(self._name_entry.get()) or None
-        request = ClipRequest(url=url, start=start, end=end, dest_dir=dest_dir, name=name)
+        request = ClipRequest(
+            url=url,
+            start=start,
+            end=end,
+            dest_dir=dest_dir,
+            name=name,
+            add_slowmo=add_slowmo,
+            slowmo_percent=slowmo_percent,
+        )
         download_fn = download_stream_clip if is_stream_url(url) else download_youtube_clip
 
         self._download_button.configure(state="disabled", text="Téléchargement en cours…")

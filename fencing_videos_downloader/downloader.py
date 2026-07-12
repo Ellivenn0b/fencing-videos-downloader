@@ -35,10 +35,14 @@ class ClipRequest:
     end: int  # secondes
     dest_dir: Path
     name: str | None = None  # sans extension ; None = nom généré
+    add_slowmo: bool = False  # ajoute une version ralentie à la fin de l'extrait
+    slowmo_percent: int = 50  # réduction de vitesse en % (ex. 50 = deux fois plus lent)
 
     def __post_init__(self) -> None:
         if self.end <= self.start:
             raise ValueError("l'horodatage de fin doit être après celui de début")
+        if self.add_slowmo and not (1 <= self.slowmo_percent <= 95):
+            raise ValueError("le pourcentage de ralenti doit être compris entre 1 et 95")
 
 
 def _ffmpeg_exe() -> str:
@@ -60,6 +64,93 @@ def _popen_options() -> dict:
 def _escape_outtmpl(text: str) -> str:
     # Les « % » littéraux doivent être doublés dans un gabarit yt-dlp.
     return text.replace("%", "%%")
+
+
+def _run_ffmpeg(command: list[str]) -> None:
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **_popen_options(),
+    )
+    if result.returncode != 0:
+        raise DownloadError(_friendly_ffmpeg_error(result.stderr))
+
+
+def _atempo_chain(factor: float) -> str:
+    """Enchaîne les filtres « atempo » (chacun limité à [0.5, 2.0]) pour atteindre `factor`."""
+    filters = []
+    remaining = factor
+    while remaining < 0.5:
+        filters.append("atempo=0.5")
+        remaining /= 0.5
+    filters.append(f"atempo={remaining:.6f}")
+    return ",".join(filters)
+
+
+def _apply_slowmo_if_requested(
+    output: Path,
+    request: ClipRequest,
+    on_progress: ProgressCallback,
+    on_status: StatusCallback,
+) -> Path:
+    """Ajoute, si demandé, une version ralentie de l'extrait à la suite de la version normale."""
+    if not request.add_slowmo:
+        return output
+
+    on_status("Génération du ralenti…")
+    on_progress(None)
+    ffmpeg = _ffmpeg_exe()
+    speed_factor = 1 - request.slowmo_percent / 100
+    setpts_factor = 1 / speed_factor
+    slow_temp = output.with_name(output.stem + "__slowmo_tmp" + output.suffix)
+    final_temp = output.with_name(output.stem + "__final_tmp" + output.suffix)
+
+    try:
+        _run_ffmpeg(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel", "error",
+                "-i", str(output),
+                "-filter_complex",
+                f"[0:v]setpts={setpts_factor:.6f}*PTS[v];[0:a]{_atempo_chain(speed_factor)}[a]",
+                "-map", "[v]",
+                "-map", "[a]",
+                "-y", str(slow_temp),
+            ]
+        )
+
+        on_status("Assemblage de l'extrait et du ralenti…")
+        on_progress(None)
+        _run_ffmpeg(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel", "error",
+                "-i", str(output),
+                "-i", str(slow_temp),
+                "-filter_complex",
+                "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
+                "-map", "[outv]",
+                "-map", "[outa]",
+                "-y", str(final_temp),
+            ]
+        )
+    except DownloadError:
+        slow_temp.unlink(missing_ok=True)
+        final_temp.unlink(missing_ok=True)
+        raise
+
+    slow_temp.unlink(missing_ok=True)
+    output.unlink(missing_ok=True)
+    final_temp.rename(output)
+    return output
 
 
 class _SilentLogger:
@@ -127,6 +218,7 @@ def download_youtube_clip(
     except yt_dlp.utils.DownloadError as exc:
         raise DownloadError(_friendly_youtube_error(str(exc))) from exc
 
+    result = _apply_slowmo_if_requested(result, request, on_progress, on_status)
     on_progress(1.0)
     return result
 
@@ -212,6 +304,7 @@ def download_stream_clip(
     if not output.exists():
         raise DownloadError("FFmpeg n'a produit aucun fichier. Vérifiez le lien du flux.")
 
+    output = _apply_slowmo_if_requested(output, request, on_progress, on_status)
     on_progress(1.0)
     return output
 
